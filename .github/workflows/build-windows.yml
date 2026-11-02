@@ -61,8 +61,31 @@ jobs:
 
       # 6. 打包 MSI 与 EXE（jpackage 在 Windows runner 上可正常执行）
       - name: Package MSI & EXE
+        id: package
         shell: bash
-        run: ./gradlew :composeApp:packageMsi :composeApp:packageExe --no-daemon --console=plain
+        run: ./gradlew :composeApp:packageMsi :composeApp:packageExe --no-daemon --console=plain --stacktrace
+
+      # 6.1 打包失败时输出 jpackage 错误日志，便于诊断
+      - name: Dump jpackage logs on failure
+        if: failure()
+        shell: pwsh
+        run: |
+          $logDir = "composeApp/build/compose/logs"
+          if (Test-Path $logDir) {
+            Write-Host "===== jpackage logs ====="
+            Get-ChildItem -Path $logDir -Recurse -File | ForEach-Object {
+              Write-Host "----- $($_.FullName) -----"
+              Get-Content $_.FullName -Raw
+              Write-Host ""
+            }
+          } else {
+            Write-Host "No jpackage log dir at $logDir"
+          }
+          Write-Host "===== args file (if exists) ====="
+          $argsFile = "composeApp/build/compose/tmp/packageMsi.args.txt"
+          if (Test-Path $argsFile) {
+            Get-Content $argsFile -Raw
+          }
 
       # 7. 上传 MSI 安装包为构建产物（90 天保留期）
       - name: Upload MSI
