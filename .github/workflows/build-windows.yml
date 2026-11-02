@@ -1,11 +1,12 @@
-# 在 Windows runner 上打包 ExamTimeDown 的 EXE 安装包
+# 在 Windows runner 上打包 ExamTimeDown 的便携版（可运行目录 + zip）
 # 触发：手动执行（workflow_dispatch）+ 推送 tag v* 时自动触发
 #
-# 注意：JDK jpackage 不支持交叉打包，必须在 Windows 环境才能产出 Windows 安装包。
-# 只产出 EXE（jpackage 内置打包器，零外部依赖）；MSI 需要 WiX Toolset，但
-# Compose Desktop 自动下载的 WiX 3.11 在 Windows Server 2022 上链接 MSI 时
-# 退出码 311，故放弃 MSI。
-name: Build Windows Installer
+# 背景：jpackage 的 --type msi/exe 都依赖 WiX Toolset，而 Compose Desktop 自动下载的
+# WiX 3.11 的 light.exe 在 Windows Server 2022（GitHub Actions runner）上链接 MSI 时
+# 退出码 311，无法产出安装包。改用 createDistributable 产出可运行目录（含 JRE + 应用
+# jar + 启动器），压缩成 zip 分发。用户解压后双击 ExamTimeDown.exe 即可运行，
+# 功能与安装版一致（仅无开始菜单快捷方式/注册表项）。
+name: Build Windows Portable
 
 on:
   workflow_dispatch:
@@ -15,7 +16,7 @@ on:
 
 jobs:
   build-windows:
-    name: Build EXE on Windows
+    name: Build Windows portable zip
     runs-on: windows-latest
 
     steps:
@@ -44,25 +45,52 @@ jobs:
         shell: bash
         run: ./gradlew :composeApp:jvmTest --no-daemon --console=plain
 
-      # 打包 EXE（jpackage 内置打包器，不依赖 WiX）
-      - name: Package EXE
+      # 产出可运行目录（createDistributable 不依赖 WiX，只构建 jlink 运行时镜像 + 启动器）
+      - name: Create distributable
         shell: bash
-        run: ./gradlew :composeApp:packageExe --no-daemon --console=plain
+        run: ./gradlew :composeApp:createDistributable --no-daemon --console=plain
 
-      # 上传 EXE 安装包
-      - name: Upload EXE
+      # 打印产出目录结构，便于核对
+      - name: List distributable
+        shell: pwsh
+        run: |
+          $appDir = "composeApp/build/compose/binaries/main/app"
+          if (Test-Path $appDir) {
+            Write-Host "===== app dir structure ====="
+            Get-ChildItem -Path $appDir -Recurse -Depth 2 | Select-Object FullName, Length | Format-Table -AutoSize
+            $exe = Get-ChildItem -Path $appDir -Recurse -Filter "ExamTimeDown.exe" -ErrorAction SilentlyContinue
+            if ($exe) { Write-Host "Launcher exe: $($exe.FullName)" }
+          } else {
+            Write-Host "::error::app dir not found at $appDir"
+            exit 1
+          }
+
+      # 压缩成便携版 zip（包含完整 JRE，用户解压即用）
+      - name: Zip portable bundle
+        shell: pwsh
+        run: |
+          $appDir = "composeApp/build/compose/binaries/main/app/ExamTimeDown"
+          if (-not (Test-Path $appDir)) {
+            # 兜底：若 jpackage 产出嵌套结构不同，查找含 .exe 的目录
+            $appDir = (Get-ChildItem -Path "composeApp/build/compose/binaries/main/app" -Directory | Select-Object -First 1).FullName
+          }
+          $zipPath = "ExamTimeDown-1.0.0-windows-portable.zip"
+          Compress-Archive -Path "$appDir\*" -DestinationPath $zipPath -CompressionLevel Optimal
+          Write-Host "Created $zipPath ($((Get-Item $zipPath).Length) bytes)"
+
+      # 上传便携版 zip
+      - name: Upload portable zip
         uses: actions/upload-artifact@v4
         with:
-          name: ExamTimeDown-windows-exe
-          path: composeApp/build/compose/binaries/main/exe/*.exe
+          name: ExamTimeDown-windows-portable
+          path: ExamTimeDown-1.0.0-windows-portable.zip
           if-no-files-found: error
           retention-days: 90
 
-      # 若是 tag 触发，创建 GitHub Release 并附加 EXE
+      # 若是 tag 触发，创建 GitHub Release 并附加 zip
       - name: Release on tag
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: |
-            composeApp/build/compose/binaries/main/exe/*.exe
+          files: ExamTimeDown-1.0.0-windows-portable.zip
           generate_release_notes: true

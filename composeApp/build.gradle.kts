@@ -57,11 +57,10 @@ compose.desktop {
     application {
         mainClass = "com.examtimedown.app.MainKt"
         nativeDistributions {
-            // 只产出 EXE：jpackage 内置打包器，不依赖 WiX Toolset。
-            // MSI 格式需要 WiX，但 Compose Desktop 自动下载的 WiX 3.11 的 light.exe
-            // 在 Windows Server 2022（GitHub Actions runner）上链接 MSI 退出码 311；
-            // 系统 WiX 3.14.1 又无法被 jpackage 正确识别（WIX 环境变量无效）。
-            // EXE 安装包功能完整（快捷方式/菜单/目录选择），足以满足分发需求。
+            // CI 产出便携版（createDistributable + zip），不依赖 WiX。
+            // 本地 Windows 开发者若装了 WiX 3.14+，可手动跑 packageMsi/packageExe 产出安装包。
+            // Compose Desktop 自动下载的 WiX 3.11 在 Windows Server 2022 上 light.exe 退出码 311，
+            // 故 CI 不产 MSI/EXE 安装包。
             targetFormats(TargetFormat.Exe)
             packageName = "ExamTimeDown"
             packageVersion = "1.0.0"
