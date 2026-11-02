@@ -20,12 +20,31 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # 配置 JDK 21（与本地开发保持一致，foojay-resolver 也可自动下载）
+      # 配置 JDK 21（与本地开发保持一致）
       - name: Setup JDK 21
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
           java-version: '21'
+
+      # 配置系统预装的 WiX 3.14.1（设置 WIX 环境变量）
+      # build.gradle.kts 已禁用 Compose 自动下载的 WiX 3.11.2（其 light.exe 在
+      # Windows Server 2022 上链接 MSI 时退出码 311）。jpackage 通过 WIX 环境变量
+      # 定位 WiX 工具链，指向系统预装版本即可。
+      - name: Configure system WiX
+        shell: pwsh
+        run: |
+          $candle = Get-Command candle.exe -ErrorAction SilentlyContinue
+          if (-not $candle) {
+            Write-Host "::error::candle.exe not found in PATH — system WiX missing?"
+            exit 1
+          }
+          $binDir = Split-Path $candle.Source -Parent
+          $wixRoot = Split-Path $binDir -Parent
+          echo "WIX=$wixRoot" >> $env:GITHUB_ENV
+          Write-Host "Using system WiX at: $wixRoot"
+          Write-Host "candle version:"
+          & candle.exe -help | Select-Object -First 2
 
       # 缓存 Gradle 依赖，加速后续构建
       - name: Cache Gradle
@@ -42,71 +61,13 @@ jobs:
         shell: bash
         run: ./gradlew :composeApp:jvmTest --no-daemon --console=plain
 
-      # 打印环境信息，便于诊断 jpackage 问题
-      - name: Print env diagnostics
-        shell: pwsh
-        run: |
-          Write-Host "===== jpackage version ====="
-          & "$env:JAVA_HOME\bin\jpackage.exe" --version
-          Write-Host "===== WiX in PATH ====="
-          $candle = Get-Command candle.exe -ErrorAction SilentlyContinue
-          if ($candle) { Write-Host "candle: $($candle.Source)" } else { Write-Host "candle NOT in PATH" }
-          $light = Get-Command light.exe -ErrorAction SilentlyContinue
-          if ($light) { Write-Host "light: $($light.Source)" } else { Write-Host "light NOT in PATH" }
-
-      # 打包 MSI 与 EXE —— continue-on-error 让后续诊断步骤始终能跑
+      # 打包 MSI 与 EXE
       - name: Package MSI & EXE
-        id: package
-        continue-on-error: true
         shell: bash
-        run: ./gradlew :composeApp:packageMsi :composeApp:packageExe --no-daemon --console=plain --stacktrace --info
+        run: ./gradlew :composeApp:packageMsi :composeApp:packageExe --no-daemon --console=plain
 
-      # 始终输出 jpackage 日志并写到 Step Summary（运行页面顶部直接可见）
-      - name: Dump jpackage logs (always)
-        if: always()
-        shell: pwsh
-        run: |
-          $summary = $env:GITHUB_STEP_SUMMARY
-          $output = ""
-          $logDir = "composeApp/build/compose/logs"
-          $output += "## jpackage diagnostics`n`n"
-          if (Test-Path $logDir) {
-            Get-ChildItem -Path $logDir -Recurse -File | ForEach-Object {
-              $output += "----- $($_.FullName) -----`n"
-              $output += "`````n"
-              $output += Get-Content $_.FullName -Raw
-              $output += "`n`````n"
-            }
-          } else {
-            $output += "No jpackage log dir at $logDir`n"
-          }
-          $output += "----- packageMsi.args.txt -----`n"
-          $argsFile = "composeApp/build/compose/tmp/packageMsi.args.txt"
-          if (Test-Path $argsFile) {
-            $output += "`````n"
-            $output += Get-Content $argsFile -Raw
-            $output += "`n`````n"
-          } else {
-            $output += "args file not found`n"
-          }
-          Write-Host $output
-          Add-Content -Path $summary -Value $output
-
-      # 上传日志目录作为 artifact（保证诊断信息可下载）
-      - name: Upload build logs
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: ExamTimeDown-build-logs
-          path: |
-            composeApp/build/compose/logs/
-            composeApp/build/compose/tmp/
-          if-no-files-found: warn
-          retention-days: 14
-
-      # 上传 MSI（成功才上传）
+      # 上传 MSI 安装包
       - name: Upload MSI
-        if: steps.package.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
           name: ExamTimeDown-windows-msi
@@ -114,9 +75,8 @@ jobs:
           if-no-files-found: error
           retention-days: 90
 
-      # 上传 EXE（成功才上传）
+      # 上传 EXE 安装包
       - name: Upload EXE
-        if: steps.package.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
           name: ExamTimeDown-windows-exe
@@ -124,18 +84,12 @@ jobs:
           if-no-files-found: error
           retention-days: 90
 
-      # 若是 tag 触发且打包成功，创建 GitHub Release
+      # 若是 tag 触发，创建 GitHub Release 并附加 MSI/EXE
       - name: Release on tag
-        if: startsWith(github.ref, 'refs/tags/v') && steps.package.outcome == 'success'
+        if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
           files: |
             composeApp/build/compose/binaries/main/msi/*.msi
             composeApp/build/compose/binaries/main/exe/*.exe
           generate_release_notes: true
-
-      # 打包失败时让 job 显式失败
-      - name: Fail if package failed
-        if: steps.package.outcome == 'failure'
-        shell: bash
-        run: exit 1
