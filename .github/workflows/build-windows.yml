@@ -1,8 +1,10 @@
-# 在 Windows runner 上打包 ExamTimeDown 的 MSI / EXE 安装包
+# 在 Windows runner 上打包 ExamTimeDown 的 EXE 安装包
 # 触发：手动执行（workflow_dispatch）+ 推送 tag v* 时自动触发
 #
 # 注意：JDK jpackage 不支持交叉打包，必须在 Windows 环境才能产出 Windows 安装包。
-# 本 workflow 在 windows-latest runner 上运行，产出 MSI/EXE 并作为 artifact 上传。
+# 只产出 EXE（jpackage 内置打包器，零外部依赖）；MSI 需要 WiX Toolset，但
+# Compose Desktop 自动下载的 WiX 3.11 在 Windows Server 2022 上链接 MSI 时
+# 退出码 311，故放弃 MSI。
 name: Build Windows Installer
 
 on:
@@ -13,7 +15,7 @@ on:
 
 jobs:
   build-windows:
-    name: Build MSI/EXE on Windows
+    name: Build EXE on Windows
     runs-on: windows-latest
 
     steps:
@@ -26,25 +28,6 @@ jobs:
         with:
           distribution: 'temurin'
           java-version: '21'
-
-      # 配置系统预装的 WiX 3.14.1（设置 WIX 环境变量）
-      # build.gradle.kts 已禁用 Compose 自动下载的 WiX 3.11.2（其 light.exe 在
-      # Windows Server 2022 上链接 MSI 时退出码 311）。jpackage 通过 WIX 环境变量
-      # 定位 WiX 工具链，指向系统预装版本即可。
-      - name: Configure system WiX
-        shell: pwsh
-        run: |
-          $candle = Get-Command candle.exe -ErrorAction SilentlyContinue
-          if (-not $candle) {
-            Write-Host "::error::candle.exe not found in PATH — system WiX missing?"
-            exit 1
-          }
-          $binDir = Split-Path $candle.Source -Parent
-          $wixRoot = Split-Path $binDir -Parent
-          echo "WIX=$wixRoot" >> $env:GITHUB_ENV
-          Write-Host "Using system WiX at: $wixRoot"
-          Write-Host "candle version:"
-          & candle.exe -help | Select-Object -First 2
 
       # 缓存 Gradle 依赖，加速后续构建
       - name: Cache Gradle
@@ -61,19 +44,10 @@ jobs:
         shell: bash
         run: ./gradlew :composeApp:jvmTest --no-daemon --console=plain
 
-      # 打包 MSI 与 EXE
-      - name: Package MSI & EXE
+      # 打包 EXE（jpackage 内置打包器，不依赖 WiX）
+      - name: Package EXE
         shell: bash
-        run: ./gradlew :composeApp:packageMsi :composeApp:packageExe --no-daemon --console=plain
-
-      # 上传 MSI 安装包
-      - name: Upload MSI
-        uses: actions/upload-artifact@v4
-        with:
-          name: ExamTimeDown-windows-msi
-          path: composeApp/build/compose/binaries/main/msi/*.msi
-          if-no-files-found: error
-          retention-days: 90
+        run: ./gradlew :composeApp:packageExe --no-daemon --console=plain
 
       # 上传 EXE 安装包
       - name: Upload EXE
@@ -84,12 +58,11 @@ jobs:
           if-no-files-found: error
           retention-days: 90
 
-      # 若是 tag 触发，创建 GitHub Release 并附加 MSI/EXE
+      # 若是 tag 触发，创建 GitHub Release 并附加 EXE
       - name: Release on tag
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            composeApp/build/compose/binaries/main/msi/*.msi
             composeApp/build/compose/binaries/main/exe/*.exe
           generate_release_notes: true

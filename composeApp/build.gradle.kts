@@ -57,7 +57,12 @@ compose.desktop {
     application {
         mainClass = "com.examtimedown.app.MainKt"
         nativeDistributions {
-            targetFormats(TargetFormat.Msi, TargetFormat.Exe)
+            // 只产出 EXE：jpackage 内置打包器，不依赖 WiX Toolset。
+            // MSI 格式需要 WiX，但 Compose Desktop 自动下载的 WiX 3.11 的 light.exe
+            // 在 Windows Server 2022（GitHub Actions runner）上链接 MSI 退出码 311；
+            // 系统 WiX 3.14.1 又无法被 jpackage 正确识别（WIX 环境变量无效）。
+            // EXE 安装包功能完整（快捷方式/菜单/目录选择），足以满足分发需求。
+            targetFormats(TargetFormat.Exe)
             packageName = "ExamTimeDown"
             packageVersion = "1.0.0"
             description = "考试倒计时桌面挂件"
@@ -73,13 +78,4 @@ compose.desktop {
             }
         }
     }
-}
-
-// ===== Windows 打包：使用系统预装的 WiX 3.14.1，禁用 Compose 自动下载的 3.11.2 =====
-// 原因：Compose Desktop 的 downloadWix 任务会下载 wix311-binaries.zip，但 WiX 3.11 的
-// light.exe 在 Windows Server 2022（GitHub Actions runner）上链接 MSI 时退出码 311。
-// 改用系统预装的 WiX 3.14.1（通过 WIX 环境变量定位，在 CI workflow 中设置）。
-// 注意：本地 Windows 开发者需自行安装 WiX 3.14+ 并设置 WIX 环境变量。
-tasks.matching { it.name == "downloadWix" || it.name == "unzipWix" }.configureEach {
-    enabled = false
 }
