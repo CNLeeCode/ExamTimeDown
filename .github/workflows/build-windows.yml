@@ -23,12 +23,19 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # 2. 安装 WiX Toolset（jpackage 打包 MSI 必需）
-      #    jpackage 需要 wix.exe / candle.exe / light.exe 在 PATH 中
-      - name: Install WiX Toolset 3.11
+      # 2. WiX Toolset（jpackage 打包 MSI 必需）
+      #    windows-latest runner 已预装 WiX 3.14.1 并配置在 PATH 中，
+      #    无需手动安装。校验一下 candle.exe 可用即可。
+      - name: Verify WiX available
+        shell: pwsh
         run: |
-          choco install wixtoolset -y --version=3.11.2
-          echo "C:\Program Files (x86)\WiX Toolset v3.11\bin" >> $env:GITHUB_PATH
+          $wix = Get-Command candle.exe -ErrorAction SilentlyContinue
+          if (-not $wix) {
+            # 极少数情况：runner 镜像更新移除了 WiX，则用 choco 装（允许降级）
+            choco install wixtoolset -y --allow-downgrade
+          } else {
+            Write-Host "WiX already available at: $($wix.Source)"
+          }
 
       # 3. 配置 JDK 21（与本地开发保持一致，foojay-resolver 也可自动下载）
       - name: Setup JDK 21
