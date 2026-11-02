@@ -74,3 +74,30 @@ compose.desktop {
         }
     }
 }
+
+// ===== jpackage 诊断：任务结束后强制打印日志文件内容到 Gradle 控制台 =====
+// 解决 Compose packageMsi/packageExe 失败时 jpackage stderr 被 Gradle 吞掉的问题。
+// 用 finalizedBy 确保即使任务失败也执行，让我们能在 CI 日志里看到真正的错误。
+val dumpJpackageLogs by tasks.registering {
+    doLast {
+        val logDir = file("build/compose/logs")
+        if (!logDir.exists()) {
+            logger.lifecycle("[jpackage-diag] no log dir at ${logDir.absolutePath}")
+            return@doLast
+        }
+        logDir.walkTopDown().filter { it.isFile }.forEach { f ->
+            logger.lifecycle("----- ${f.relativeTo(projectDir)} -----")
+            runCatching { f.readText() }.onSuccess { logger.lifecycle(it) }
+                .onFailure { logger.lifecycle("[unreadable: ${it.message}]") }
+        }
+        val argsFile = file("build/compose/tmp/packageMsi.args.txt")
+        if (argsFile.exists()) {
+            logger.lifecycle("----- packageMsi.args.txt -----")
+            logger.lifecycle(argsFile.readText())
+        }
+    }
+}
+
+tasks.matching { it.name == "packageMsi" || it.name == "packageExe" }.configureEach {
+    finalizedBy(dumpJpackageLogs)
+}

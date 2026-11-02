@@ -61,32 +61,36 @@ jobs:
         shell: bash
         run: ./gradlew :composeApp:packageMsi :composeApp:packageExe --no-daemon --console=plain --stacktrace --info
 
-      # 始终输出 jpackage 日志（无论上一步成功失败）
+      # 始终输出 jpackage 日志并写到 Step Summary（运行页面顶部直接可见）
       - name: Dump jpackage logs (always)
         if: always()
         shell: pwsh
         run: |
+          $summary = $env:GITHUB_STEP_SUMMARY
+          $output = ""
           $logDir = "composeApp/build/compose/logs"
-          Write-Host "===== jpackage logs dir: $logDir ====="
+          $output += "## jpackage diagnostics`n`n"
           if (Test-Path $logDir) {
             Get-ChildItem -Path $logDir -Recurse -File | ForEach-Object {
-              Write-Host "----- $($_.FullName) -----"
-              Get-Content $_.FullName -Raw
-              Write-Host ""
+              $output += "----- $($_.FullName) -----`n"
+              $output += "`````n"
+              $output += Get-Content $_.FullName -Raw
+              $output += "`n`````n"
             }
           } else {
-            Write-Host "No jpackage log dir at $logDir"
+            $output += "No jpackage log dir at $logDir`n"
           }
-          Write-Host "===== args file (if exists) ====="
+          $output += "----- packageMsi.args.txt -----`n"
           $argsFile = "composeApp/build/compose/tmp/packageMsi.args.txt"
           if (Test-Path $argsFile) {
-            Get-Content $argsFile -Raw
+            $output += "`````n"
+            $output += Get-Content $argsFile -Raw
+            $output += "`n`````n"
+          } else {
+            $output += "args file not found`n"
           }
-          Write-Host "===== binaries dir listing ====="
-          $binDir = "composeApp/build/compose/binaries"
-          if (Test-Path $binDir) {
-            Get-ChildItem -Path $binDir -Recurse | Select-Object FullName, Length
-          }
+          Write-Host $output
+          Add-Content -Path $summary -Value $output
 
       # 上传日志目录作为 artifact（保证诊断信息可下载）
       - name: Upload build logs
